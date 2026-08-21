@@ -38,40 +38,164 @@ class FleaScene extends Phaser.Scene {
          */
         const fleaCount = Phaser.Math.Between(5, 10);
 
-        const occupiedRects = [];
+        /*
+         * Generate all logical flea sizes FIRST.
+         *
+         * This lets us calculate a visual scale that guarantees
+         * sufficient vertical room for even a worst-case stack.
+         */
+        const logicalSizes = [];
 
         for (let i = 0; i < fleaCount; i++) {
-            const size = Phaser.Math.Between(28, 72);
+            logicalSizes.push(
+                Phaser.Math.Between(28, 72)
+            );
+        }
+
+        const layout =
+            this.layoutForFleaCount(fleaCount);
+
+        /*
+         * Playable vertical region.
+         *
+         * Leave the title above and controls below untouched.
+         */
+        const PLAY_TOP = 64;
+        const PLAY_BOTTOM = 339;
+        const PLAY_HEIGHT =
+            PLAY_BOTTOM - PLAY_TOP;
+
+        const STACK_GAP = 2;
+
+        const totalInitialLogicalArea =
+            logicalSizes.reduce(
+                (sum, side) =>
+                    sum + side * side,
+                0
+            );
+
+        /*
+         * For conserved total area A and n surviving square fleas,
+         *
+         *     sum(sqrt(area_i)) <= sqrt(n * A)
+         *
+         * so sqrt(n*A) is a safe upper bound on the complete
+         * unscaled vertical stack height.
+         */
+        const worstLogicalStackHeight =
+            Math.sqrt(
+                fleaCount *
+                totalInitialLogicalArea
+            );
+
+        /*
+         * Reserve about 12% of the available height as aesthetic
+         * breathing room rather than filling the field exactly.
+         */
+        const usableStackHeight =
+            PLAY_HEIGHT * 0.88 -
+            STACK_GAP * (fleaCount - 1);
+
+        const guaranteedFitScale =
+            usableStackHeight /
+            worstLogicalStackHeight;
+
+        /*
+         * Never enlarge beyond our aesthetic scale table.
+         * Only shrink when geometry requires it.
+         */
+        this.visualScale = Math.min(
+            layout.visualScale,
+            guaranteedFitScale
+        );
+
+        const worstDisplayStackHeight =
+            worstLogicalStackHeight *
+            this.visualScale +
+            STACK_GAP * (fleaCount - 1);
+
+        const occupiedRects = [];
+
+        const centerX = 300;
+
+        console.log(
+            "Fleas:", fleaCount,
+            "base scale:", layout.visualScale,
+            "guaranteed scale:", guaranteedFitScale,
+            "used scale:", this.visualScale,
+            "worst stack:", worstDisplayStackHeight,
+            "available height:", PLAY_HEIGHT
+        );
+
+        for (let i = 0; i < fleaCount; i++) {
+            const size = logicalSizes[i];
+
+            const displaySize =
+                size * this.visualScale;
 
             let x;
             let y;
             let candidateRect;
             let placed = false;
 
-            for (let attempt = 0; attempt < 100; attempt++) {
+            /*
+             * The critical condition:
+             *
+             * Every possible host's TOP edge has enough clearance
+             * above it for the rest of the worst-case stack.
+             *
+             * This is deliberately edge-to-edge, not center-to-edge.
+             */
+            const minY = Math.ceil(
+                PLAY_TOP +
+                worstDisplayStackHeight -
+                displaySize / 2
+            );
+
+            const maxY = Math.floor(
+                PLAY_BOTTOM -
+                displaySize / 2
+            );
+
+            for (
+                let attempt = 0;
+                attempt < 500;
+                attempt++
+            ) {
                 x = Phaser.Math.Between(
-                    40 + size / 2,
-                    560 - size / 2
+                    Math.ceil(
+                        centerX -
+                        layout.radiusX +
+                        displaySize / 2
+                    ),
+                    Math.floor(
+                        centerX +
+                        layout.radiusX -
+                        displaySize / 2
+                    )
                 );
 
                 y = Phaser.Math.Between(
-                    75 + size / 2,
-                    340 - size / 2
+                    minY,
+                    maxY
                 );
 
-                candidateRect = new Phaser.Geom.Rectangle(
-                    x - size / 2,
-                    y - size / 2,
-                    size,
-                    size
-                );
+                candidateRect =
+                    new Phaser.Geom.Rectangle(
+                        x - displaySize / 2,
+                        y - displaySize / 2,
+                        displaySize,
+                        displaySize
+                    );
 
-                const overlaps = occupiedRects.some(rect =>
-                    Phaser.Geom.Intersects.RectangleToRectangle(
-                        candidateRect,
-                        rect
-                    )
-                );
+                const overlaps =
+                    occupiedRects.some(rect =>
+                        Phaser.Geom.Intersects
+                            .RectangleToRectangle(
+                                candidateRect,
+                                rect
+                            )
+                    );
 
                 if (!overlaps) {
                     placed = true;
@@ -86,15 +210,19 @@ class FleaScene extends Phaser.Scene {
                 continue;
             }
 
-            occupiedRects.push(candidateRect);
+            occupiedRects.push(
+                candidateRect
+            );
 
             this.createFlea(
                 x,
                 y,
                 size,
-                i + 1
+                i + 1,
+                this.visualScale
             );
         }
+
 
         /*
          * Conservation check:
@@ -107,7 +235,8 @@ class FleaScene extends Phaser.Scene {
         );
 
         this.maximumFinalSide =
-            Math.sqrt(this.totalInitialArea);
+            Math.sqrt(this.totalInitialArea) *
+            this.visualScale;
 
         console.log(
             "Initial total flea area:",
@@ -163,7 +292,7 @@ class FleaScene extends Phaser.Scene {
          * it at a visible interval.
          */
         this.time.addEvent({
-            delay: 180,
+            delay: 120,
             loop: true,
             callback: () => {
                 if (this.simulationRunning) {
@@ -174,14 +303,87 @@ class FleaScene extends Phaser.Scene {
     }
 
 
-    createFlea(x, y, size, number) {
+    layoutForFleaCount(count) {
+        /*
+         * Difficulty-aware geometry.
+         *
+         * Fewer fleas:
+         *   - larger pictures
+         *   - tighter central grouping
+         *
+         * More fleas:
+         *   - smaller pictures
+         *   - somewhat wider field
+         *
+         * Logical area is NOT changed by this scale.
+         */
+        if (count <= 2) {
+            return {
+                visualScale: 0.82,
+                radiusX: 105,
+                radiusY: 62
+            };
+        }
+
+        if (count <= 3) {
+            return {
+                visualScale: 0.76,
+                radiusX: 120,
+                radiusY: 72
+            };
+        }
+
+        if (count <= 4) {
+            return {
+                visualScale: 0.70,
+                radiusX: 135,
+                radiusY: 82
+            };
+        }
+
+        if (count <= 5) {
+            return {
+                visualScale: 0.64,
+                radiusX: 148,
+                radiusY: 90
+            };
+        }
+
+        if (count <= 6) {
+            return {
+                visualScale: 0.59,
+                radiusX: 158,
+                radiusY: 96
+            };
+        }
+
+        if (count <= 7) {
+            return {
+                visualScale: 0.54,
+                radiusX: 168,
+                radiusY: 102
+            };
+        }
+
+        return {
+            visualScale: 0.50,
+            radiusX: 178,
+            radiusY: 108
+        };
+    }
+
+
+    createFlea(x, y, size, number, visualScale) {
         const sprite = this.add.image(
             x,
             y,
             "flea"
         );
 
-        sprite.setDisplaySize(size, size);
+        sprite.setDisplaySize(
+            size * visualScale,
+            size * visualScale
+        );
 
         const flea = {
             sprite,
@@ -196,6 +398,7 @@ class FleaScene extends Phaser.Scene {
              */
             area: size * size,
             initialDisplaySize: size,
+            visualScale,
 
             jumping: false,
             feeding: false,
@@ -651,6 +854,12 @@ class FleaScene extends Phaser.Scene {
 
             flea.host.hasFleas = true;
 
+            // Draw the parasite above its host so the
+            // feeding action remains visually legible.
+            flea.sprite.setDepth(
+                flea.host.sprite.depth + 1
+            );
+
             /*
              * The Jump button supplied the user gesture,
              * so browser audio should normally be unlocked.
@@ -691,7 +900,7 @@ class FleaScene extends Phaser.Scene {
          *
          * All three transfers occur during the same tick.
          */
-        const FEED_AREA_PER_TICK = 120;
+        const FEED_AREA_PER_TICK = 300;
 
         const survivors =
             this.fleas.filter(flea => flea.alive);
@@ -809,11 +1018,15 @@ class FleaScene extends Phaser.Scene {
          * Therefore the final survivor visibly contains exactly the
          * combined bounding-box area of all fleas it has inherited.
          */
-        const side = Math.sqrt(flea.area);
+        const logicalSide =
+            Math.sqrt(flea.area);
+
+        const displaySide =
+            logicalSide * flea.visualScale;
 
         flea.sprite.setDisplaySize(
-            Math.max(1, side),
-            Math.max(1, side)
+            Math.max(1, displaySide),
+            Math.max(1, displaySide)
         );
 
         /*
@@ -864,6 +1077,9 @@ class FleaScene extends Phaser.Scene {
         flea.host = null;
         flea.feeding = false;
         flea.jumping = false;
+
+        // Return to ordinary layering when released.
+        flea.sprite.setDepth(0);
 
         flea.dx = 0;
         flea.dy = 0;
