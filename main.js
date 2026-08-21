@@ -3,6 +3,23 @@ class FleaScene extends Phaser.Scene {
         super("FleaScene");
     }
 
+    init(data) {
+        /*
+         * Level selection controls flea count only.
+         * All simulation rules remain unchanged.
+         */
+        this.levelFleaCount =
+            data && data.fleaCount
+                ? data.fleaCount
+                : 2;
+
+        this.levelName =
+            data && data.levelName
+                ? data.levelName
+                : "Demo";
+    }
+
+
     preload() {
         this.load.image("flea", "assets/flea.gif");
 
@@ -22,8 +39,23 @@ class FleaScene extends Phaser.Scene {
 
         this.add.text(
             300,
-            28,
-            "Which flea will be the last one standing?",
+            52,
+            `${this.levelName} — ${this.levelFleaCount} fleas`,
+            {
+                fontFamily: "Arial",
+                fontSize: "15px",
+                color: "#555555"
+            }
+        ).setOrigin(0.5);
+
+        this.createLevelSelector();
+
+        this.add.text(
+            300,
+            24,
+            this.levelFleaCount === 2
+                ? "Demo: watch how two fleas interact"
+                : "Which flea will be the last one standing?",
             {
                 fontFamily: "Georgia, serif",
                 fontSize: "24px",
@@ -36,7 +68,7 @@ class FleaScene extends Phaser.Scene {
          *
          * Random number of fleas, with random size and position.
          */
-        const fleaCount = Phaser.Math.Between(5, 10);
+        const fleaCount = this.levelFleaCount;
 
         /*
          * Generate all logical flea sizes FIRST.
@@ -60,7 +92,7 @@ class FleaScene extends Phaser.Scene {
          *
          * Leave the title above and controls below untouched.
          */
-        const PLAY_TOP = 64;
+        const PLAY_TOP = 82;
         const PLAY_BOTTOM = 339;
         const PLAY_HEIGHT =
             PLAY_BOTTOM - PLAY_TOP;
@@ -299,6 +331,64 @@ class FleaScene extends Phaser.Scene {
                     this.feedingStep();
                 }
             }
+        });
+    }
+
+
+    createLevelSelector() {
+        const levels = [
+            { label: "Demo", fleas: 2 },
+            { label: "1", fleas: 3 },
+            { label: "2", fleas: 4 },
+            { label: "3", fleas: 5 },
+            { label: "4", fleas: 6 },
+            { label: "5", fleas: 7 },
+            { label: "6", fleas: 8 }
+        ];
+
+        const startX = 90;
+        const spacing = 70;
+        const y = 74;
+
+        levels.forEach((level, index) => {
+            const active =
+                level.fleas === this.levelFleaCount;
+
+            const button = this.add.text(
+                startX + index * spacing,
+                y,
+                level.label,
+                {
+                    fontFamily: "Arial",
+                    fontSize: "14px",
+                    color: active
+                        ? "#ffffff"
+                        : "#222222",
+                    backgroundColor: active
+                        ? "#555555"
+                        : "#dddddd",
+                    padding: {
+                        left: 9,
+                        right: 9,
+                        top: 4,
+                        bottom: 4
+                    }
+                }
+            ).setOrigin(0.5);
+
+            button.setInteractive({
+                useHandCursor: true
+            });
+
+            button.on("pointerdown", () => {
+                this.scene.restart({
+                    fleaCount: level.fleas,
+                    levelName:
+                        level.label === "Demo"
+                            ? "Demo"
+                            : `Level ${level.label}`
+                });
+            });
         });
     }
 
