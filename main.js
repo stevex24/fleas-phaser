@@ -1857,12 +1857,35 @@ class FleaScene extends Phaser.Scene {
         }
 
         /*
-         * Host disappearance releases the jumper.
-         * At that point the interaction is complete.
+         * Host disappearance completes the current serial interaction.
+         *
+         * Normalize the surviving jumper into a completely fresh
+         * standalone flea state before choosing the next pair.
+         * The next Newtonian solve should therefore be no different
+         * from the original two-flea Demo: current position + current
+         * size + a newly selected host, with no stale movement state.
          */
+        if (
+            this.serialJumper &&
+            this.serialJumper.alive
+        ) {
+            this.serialJumper.jumping = false;
+            this.serialJumper.feeding = false;
+            this.serialJumper.flight = null;
+            this.serialJumper.host = null;
+            this.serialJumper.dx = 0;
+            this.serialJumper.dy = 0;
+
+            /*
+             * Ordinary standalone layering again.
+             */
+            this.serialJumper.sprite.setDepth(0);
+        }
+
         this.serialJumper = null;
         this.serialHost = null;
 
+        this.refreshHasFleas();
         this.checkForWinner();
 
         if (!this.gameFinished) {
