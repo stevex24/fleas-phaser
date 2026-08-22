@@ -502,6 +502,9 @@ class FleaScene extends Phaser.Scene {
             dx: 0,
             dy: 0,
 
+            // Used by the Newtonian jumping version.
+            flight: null,
+
             alive: true,
             chosen: false
         };
@@ -717,40 +720,10 @@ class FleaScene extends Phaser.Scene {
                     this.lookForLargerFlea(flea);
 
                 if (host) {
-                    flea.host = host;
-
-                    /*
-                     * Greenfoot aimed toward the host, with the
-                     * parasite positioned approximately above it.
-                     */
-                    const targetX = host.sprite.x;
-
-                    // Put the parasite immediately above the host,
-                    // using half-heights because Phaser sprite
-                    // positions are measured from their centers.
-                    const rawTargetY =
-                        host.sprite.y -
-                        (
-                            host.sprite.displayHeight / 2 +
-                            flea.sprite.displayHeight / 2 +
-                            2
-                        );
-
-                    // Keep the entire parasite visible.
-                    const targetY = Math.max(
-                        flea.sprite.displayHeight / 2 + 5,
-                        rawTargetY
+                    this.beginTravelToHost(
+                        flea,
+                        host
                     );
-
-                    flea.dx = Math.round(
-                        targetX - flea.sprite.x
-                    );
-
-                    flea.dy = Math.round(
-                        targetY - flea.sprite.y
-                    );
-
-                    flea.jumping = true;
                 }
             }
 
@@ -825,32 +798,443 @@ class FleaScene extends Phaser.Scene {
             return;
         }
 
-        attacker.host = target;
+        this.beginTravelToHost(
+            attacker,
+            target
+        );
+    }
 
-        const targetX = target.sprite.x;
 
-        const rawTargetY =
-            target.sprite.y -
+    beginTravelToHost(flea, host) {
+        flea.host = host;
+
+        /*
+         * Physics development proceeds one level at a time.
+         *
+         * Demo (2 fleas): empirical flea ballistics.
+         * Levels 1-6: keep the existing geometric travel for now.
+         */
+        if (this.levelFleaCount === 2) {
+            this.prepareBallisticJump(
+                flea,
+                host
+            );
+        } else {
+            this.prepareGeometricJump(
+                flea,
+                host
+            );
+        }
+    }
+
+
+    prepareGeometricJump(flea, host) {
+        const targetX = host.sprite.x;
+
+        const targetY =
+            host.sprite.y -
             (
-                target.sprite.displayHeight / 2 +
-                attacker.sprite.displayHeight / 2 +
+                host.sprite.displayHeight / 2 +
+                flea.sprite.displayHeight / 2 +
                 2
             );
 
-        const targetY = Math.max(
-            attacker.sprite.displayHeight / 2 + 5,
-            rawTargetY
+        flea.dx = Math.round(
+            targetX - flea.sprite.x
         );
 
-        attacker.dx = Math.round(
-            targetX - attacker.sprite.x
+        flea.dy = Math.round(
+            targetY - flea.sprite.y
         );
 
-        attacker.dy = Math.round(
-            targetY - attacker.sprite.y
+        flea.flight = null;
+        flea.jumping = true;
+    }
+
+
+    prepareBallisticJump(flea, host) {
+        /*
+         * OPTION 1B — empirical flea biomechanics.
+         *
+         * Archaeopsyllus erinacei measurements:
+         *
+         * mean takeoff velocity: ~1.3 m/s
+         * observed range:        0.9 - 1.85 m/s
+         * mean elevation:        ~39 degrees
+         * observed range:        28 - 52 degrees
+         *
+         * We prefer 39 degrees and alter launch speed to reach
+         * the host, matching the observed biological strategy.
+         */
+
+        const GRAVITY = 9.81;
+
+        /*
+         * Game-to-world conversion.
+         *
+         * This does NOT claim that a sprite pixel is literally part
+         * of the flea's body scale. It maps the playing field onto
+         * real jump distance.
+         */
+        const PIXELS_PER_METER = 1200;
+
+        const MIN_SPEED = 0.90;
+        const MAX_SPEED = 1.85;
+
+        const MIN_ANGLE = 28;
+        const MAX_ANGLE = 52;
+        const PREFERRED_ANGLE = 39;
+
+        /*
+         * Real flea jumps happen too quickly for a player to inspect.
+         * Uniform slow motion preserves trajectory and arrival order.
+         */
+        const SLOW_MOTION = 6.0;
+
+        const startX = flea.sprite.x;
+        const startY = flea.sprite.y;
+
+        /*
+         * Land ON TOP of the host.
+         *
+         * Because the parasite is smaller than its larger host,
+         * its centre can land somewhat toward the approaching edge
+         * while its whole body remains supported by the host.
+         */
+        const maximumTopOffset = Math.max(
+            0,
+            (
+                host.sprite.displayWidth -
+                flea.sprite.displayWidth
+            ) / 2 - 2
         );
 
-        attacker.jumping = true;
+        let approachDirection =
+            Math.sign(startX - host.sprite.x);
+
+        if (approachDirection === 0) {
+            /*
+             * Deterministic choice for the rare vertically aligned
+             * case, giving the projectile some horizontal distance.
+             */
+            approachDirection =
+                host.sprite.x < this.scale.width / 2
+                    ? 1
+                    : -1;
+        }
+
+        let targetX =
+            host.sprite.x +
+            approachDirection *
+            maximumTopOffset;
+
+        const targetY =
+            host.sprite.y -
+            (
+                host.sprite.displayHeight / 2 +
+                flea.sprite.displayHeight / 2 +
+                2
+            );
+
+        let dxPixels =
+            targetX - startX;
+
+        /*
+         * Avoid an exactly vertical shot. Natural flea jumps have
+         * substantial horizontal components.
+         */
+        if (Math.abs(dxPixels) < 4) {
+            targetX +=
+                approachDirection * 4;
+
+            dxPixels =
+                targetX - startX;
+        }
+
+        const direction =
+            Math.sign(dxPixels);
+
+        const x =
+            Math.abs(dxPixels) /
+            PIXELS_PER_METER;
+
+        /*
+         * Positive y means upward in the physical equations.
+         */
+        const y =
+            (startY - targetY) /
+            PIXELS_PER_METER;
+
+        /*
+         * For a chosen elevation theta:
+         *
+         * y = x tan(theta)
+         *     - g x^2 /
+         *       (2 v^2 cos^2(theta))
+         *
+         * Solve for v.
+         *
+         * Search the measured flea-angle window and choose the
+         * solution closest to the observed mean angle of 39 degrees.
+         */
+        let best = null;
+        let fallback = null;
+
+        for (
+            let angleDeg = MIN_ANGLE;
+            angleDeg <= MAX_ANGLE;
+            angleDeg += 0.25
+        ) {
+            const theta =
+                Phaser.Math.DegToRad(
+                    angleDeg
+                );
+
+            const cosTheta =
+                Math.cos(theta);
+
+            const denominator =
+                2 *
+                cosTheta *
+                cosTheta *
+                (
+                    x * Math.tan(theta) -
+                    y
+                );
+
+            if (denominator <= 0) {
+                continue;
+            }
+
+            const speed =
+                Math.sqrt(
+                    GRAVITY *
+                    x *
+                    x /
+                    denominator
+                );
+
+            if (!Number.isFinite(speed)) {
+                continue;
+            }
+
+            const candidate = {
+                angleDeg,
+                theta,
+                speed,
+                angleError:
+                    Math.abs(
+                        angleDeg -
+                        PREFERRED_ANGLE
+                    )
+            };
+
+            /*
+             * Prefer a solution inside the measured velocity range.
+             */
+            if (
+                speed >= MIN_SPEED &&
+                speed <= MAX_SPEED
+            ) {
+                if (
+                    !best ||
+                    candidate.angleError <
+                        best.angleError
+                ) {
+                    best = candidate;
+                }
+            }
+
+            /*
+             * Keep the closest physical solution as an emergency
+             * fallback for an unusual generated geometry.
+             */
+            const speedError =
+                speed < MIN_SPEED
+                    ? MIN_SPEED - speed
+                    : speed > MAX_SPEED
+                        ? speed - MAX_SPEED
+                        : 0;
+
+            candidate.speedError =
+                speedError;
+
+            if (
+                !fallback ||
+                speedError <
+                    fallback.speedError ||
+                (
+                    speedError ===
+                        fallback.speedError &&
+                    candidate.angleError <
+                        fallback.angleError
+                )
+            ) {
+                fallback = candidate;
+            }
+        }
+
+        const solution =
+            best || fallback;
+
+        if (!solution) {
+            /*
+             * Should be exceptionally rare with the compact
+             * two-flea Demo layout. Fall back to geometric movement
+             * rather than breaking the game.
+             */
+            console.warn(
+                "No ballistic solution; using geometric fallback."
+            );
+
+            this.prepareGeometricJump(
+                flea,
+                host
+            );
+
+            return;
+        }
+
+        if (!best) {
+            console.warn(
+                "Jump required speed outside measured 0.9-1.85 m/s range:",
+                solution.speed
+            );
+        }
+
+        const vx =
+            direction *
+            solution.speed *
+            Math.cos(
+                solution.theta
+            );
+
+        const vy =
+            solution.speed *
+            Math.sin(
+                solution.theta
+            );
+
+        const flightTime =
+            x /
+            (
+                solution.speed *
+                Math.cos(
+                    solution.theta
+                )
+            );
+
+        /*
+         * Mass scaling requested for Option 1B.
+         *
+         * Reference flea:
+         *   body length ~1.8 mm
+         *   mass ~0.7 mg
+         *
+         * Similar shape/density:
+         *   mass proportional to height^3.
+         *
+         * Game logical side 50 is our reference-size flea.
+         */
+        const logicalHeight =
+            Math.sqrt(flea.area);
+
+        const referenceLogicalHeight = 50;
+        const referenceMassKg =
+            0.7e-6;
+
+        const massKg =
+            referenceMassKg *
+            Math.pow(
+                logicalHeight /
+                    referenceLogicalHeight,
+                3
+            );
+
+        const kineticEnergyJ =
+            0.5 *
+            massKg *
+            solution.speed *
+            solution.speed;
+
+        flea.flight = {
+            startX,
+            startY,
+            targetX,
+            targetY,
+
+            vx,
+            vy,
+
+            gravity: GRAVITY,
+            pixelsPerMeter:
+                PIXELS_PER_METER,
+
+            physicalDuration:
+                flightTime,
+
+            slowMotion:
+                SLOW_MOTION,
+
+            startTime:
+                this.time.now,
+
+            angleDeg:
+                solution.angleDeg,
+
+            speed:
+                solution.speed,
+
+            massKg,
+
+            kineticEnergyJ
+        };
+
+        flea.jumping = true;
+
+        /*
+         * Airborne parasite always renders in front.
+         */
+        flea.sprite.setDepth(
+            1000 + flea.number
+        );
+
+        console.log(
+            `Flea ${flea.number} jump:`,
+            `angle=${solution.angleDeg.toFixed(1)} deg`,
+            `speed=${solution.speed.toFixed(3)} m/s`,
+            `mass=${(massKg * 1e6).toFixed(3)} mg`,
+            `energy=${(kineticEnergyJ * 1e6).toFixed(3)} uJ`,
+            `physical flight=${flightTime.toFixed(3)} s`
+        );
+    }
+
+
+    landOnHost(flea) {
+        flea.jumping = false;
+        flea.feeding = true;
+        flea.flight = null;
+
+        flea.host.hasFleas = true;
+
+        /*
+         * Parasite remains in front of the host while feeding.
+         */
+        flea.sprite.setDepth(
+            flea.host.sprite.depth + 1
+        );
+
+        try {
+            this.sound.play(
+                "slurp",
+                { volume: 0.20 }
+            );
+        } catch (error) {
+            console.log(
+                "Sound unavailable:",
+                error
+            );
+        }
     }
 
 
@@ -906,13 +1290,70 @@ class FleaScene extends Phaser.Scene {
         }
 
         /*
-         * This intentionally reproduces the original
-         * pre-physics Greenfoot movement:
-         *
-         * one pixel vertically and one pixel horizontally
-         * on each update.
+         * OPTION 1B ballistic motion.
          */
+        if (flea.flight) {
+            const flight =
+                flea.flight;
 
+            const displayedSeconds =
+                (
+                    this.time.now -
+                    flight.startTime
+                ) / 1000;
+
+            const t =
+                displayedSeconds /
+                flight.slowMotion;
+
+            if (
+                t >=
+                flight.physicalDuration
+            ) {
+                /*
+                 * Snap the tiny floating-point remainder to exact
+                 * top-edge contact.
+                 */
+                flea.sprite.x =
+                    flight.targetX;
+
+                flea.sprite.y =
+                    flight.targetY;
+
+                this.landOnHost(flea);
+                return;
+            }
+
+            const physicalX =
+                flight.vx * t;
+
+            const physicalY =
+                flight.vy * t -
+                0.5 *
+                flight.gravity *
+                t *
+                t;
+
+            flea.sprite.x =
+                flight.startX +
+                physicalX *
+                flight.pixelsPerMeter;
+
+            /*
+             * Phaser y increases downward, physics y upward.
+             */
+            flea.sprite.y =
+                flight.startY -
+                physicalY *
+                flight.pixelsPerMeter;
+
+            return;
+        }
+
+        /*
+         * Existing geometric movement retained temporarily for
+         * Levels 1-6 while physics is debugged incrementally.
+         */
         if (flea.dy > 0) {
             flea.sprite.y += 1;
             flea.dy -= 1;
@@ -939,32 +1380,7 @@ class FleaScene extends Phaser.Scene {
             flea.dx === 0 &&
             flea.dy === 0
         ) {
-            flea.jumping = false;
-            flea.feeding = true;
-
-            flea.host.hasFleas = true;
-
-            // Draw the parasite above its host so the
-            // feeding action remains visually legible.
-            flea.sprite.setDepth(
-                flea.host.sprite.depth + 1
-            );
-
-            /*
-             * The Jump button supplied the user gesture,
-             * so browser audio should normally be unlocked.
-             */
-            try {
-                this.sound.play(
-                    "slurp",
-                    { volume: 0.20 }
-                );
-            } catch (error) {
-                console.log(
-                    "Sound unavailable:",
-                    error
-                );
-            }
+            this.landOnHost(flea);
         }
     }
 
@@ -1173,6 +1589,7 @@ class FleaScene extends Phaser.Scene {
 
         flea.dx = 0;
         flea.dy = 0;
+        flea.flight = null;
     }
 
 
