@@ -1203,17 +1203,14 @@ class FleaScene extends Phaser.Scene {
          * Debug Newtonian physics incrementally:
          * only the two-flea Demo uses it for now.
          */
-        if (this.levelFleaCount <= 3) {
-            this.preparePhysics1AJump(
-                flea,
-                host
-            );
-        } else {
-            this.prepareGeometricJump(
-                flea,
-                host
-            );
-        }
+        /*
+         * Serial 1A branch:
+         * all game levels now use Newtonian jumping.
+         */
+        this.preparePhysics1AJump(
+            flea,
+            host
+        );
     }
 
 
