@@ -17,6 +17,11 @@ class FleaScene extends Phaser.Scene {
             data && data.levelName
                 ? data.levelName
                 : "Demo";
+
+        this.demoPhase =
+            data && data.demoPhase
+                ? data.demoPhase
+                : "choose-small";
     }
 
 
@@ -36,6 +41,7 @@ class FleaScene extends Phaser.Scene {
 
         this.fleas = [];
         this.selectedFlea = null;
+
 
         this.add.text(
             300,
@@ -78,10 +84,52 @@ class FleaScene extends Phaser.Scene {
          */
         const logicalSizes = [];
 
-        for (let i = 0; i < fleaCount; i++) {
-            logicalSizes.push(
-                Phaser.Math.Between(28, 72)
-            );
+        if (fleaCount === 2) {
+            /*
+             * Tutorial Demo:
+             *
+             * Make the rule visually learnable.
+             * The smaller flea is roughly 70-80% of the
+             * larger flea's side length.
+             *
+             * Randomize which numbered flea is smaller so
+             * the answer is not always "flea 1".
+             */
+            const largeSize =
+                Phaser.Math.Between(58, 68);
+
+            const ratio =
+                Phaser.Math.FloatBetween(
+                    0.70,
+                    0.80
+                );
+
+            const smallSize =
+                Math.round(
+                    largeSize * ratio
+                );
+
+            if (Math.random() < 0.5) {
+                logicalSizes.push(
+                    smallSize,
+                    largeSize
+                );
+            } else {
+                logicalSizes.push(
+                    largeSize,
+                    smallSize
+                );
+            }
+        } else {
+            for (
+                let i = 0;
+                i < fleaCount;
+                i++
+            ) {
+                logicalSizes.push(
+                    Phaser.Math.Between(28, 72)
+                );
+            }
         }
 
         const layout =
@@ -281,7 +329,13 @@ class FleaScene extends Phaser.Scene {
         this.selectionText = this.add.text(
             300,
             360,
-            "Click a flea to make your prediction.",
+            this.levelFleaCount === 2
+                ? (
+                    this.demoPhase === "choose-large"
+                        ? "Now click the larger flea."
+                        : "First click the smaller flea."
+                  )
+                : "Click a flea to make your prediction.",
             {
                 fontFamily: "Arial",
                 fontSize: "18px",
@@ -502,6 +556,9 @@ class FleaScene extends Phaser.Scene {
             dx: 0,
             dy: 0,
 
+            // Newtonian flight state.
+            flight: null,
+
             alive: true,
             chosen: false
         };
@@ -520,68 +577,258 @@ class FleaScene extends Phaser.Scene {
     }
 
 
-    positionFeedingFlea(flea, visited = new Set()) {
+    feedingChildren(host) {
+        return this.fleas.filter(
+            flea =>
+                flea.alive &&
+                flea.feeding &&
+                flea.host === host
+        );
+    }
+
+
+    positionFeedingTree(host, visited = new Set()) {
         if (
-            !flea ||
-            !flea.alive ||
-            !flea.feeding ||
-            !flea.host ||
-            !flea.host.alive
+            !host ||
+            !host.alive ||
+            visited.has(host)
         ) {
             return;
         }
 
-        // Protect against an accidental host cycle.
-        if (visited.has(flea)) {
+        visited.add(host);
+
+        const children =
+            this.feedingChildren(host);
+
+        if (children.length === 0) {
             return;
         }
 
-        visited.add(flea);
+        const GAP = 3;
+        const SIDE_GAP = 5;
 
         /*
-         * If the host is itself feeding on another flea,
-         * position that lower part of the stack first.
+         * Put all fleas feeding directly on this host in a visible
+         * row immediately above it.
+         *
+         * With one parasite this is the familiar vertical stack.
+         * With two or more, they fan slightly left/right instead of
+         * occupying the same pixels.
          */
-        if (flea.host.feeding) {
-            this.positionFeedingFlea(
-                flea.host,
+        const totalWidth =
+            children.reduce(
+                (sum, child) =>
+                    sum +
+                    child.sprite.displayWidth,
+                0
+            ) +
+            SIDE_GAP *
+            (children.length - 1);
+
+        let nextX =
+            host.sprite.x -
+            totalWidth / 2;
+
+        const tallestChild =
+            Math.max(
+                ...children.map(
+                    child =>
+                        child.sprite.displayHeight
+                )
+            );
+
+        const rowY =
+            host.sprite.y -
+            host.sprite.displayHeight / 2 -
+            tallestChild / 2 -
+            GAP;
+
+        for (const child of children) {
+            child.sprite.x =
+                nextX +
+                child.sprite.displayWidth / 2;
+
+            child.sprite.y =
+                rowY;
+
+            /*
+             * Every parasite remains visually in front of its host.
+             */
+            child.sprite.setDepth(
+                host.sprite.depth + 1
+            );
+
+            nextX +=
+                child.sprite.displayWidth +
+                SIDE_GAP;
+        }
+
+        /*
+         * A parasite may itself be a host for another feeding flea.
+         * Build those higher parts of the stack recursively.
+         */
+        for (const child of children) {
+            this.positionFeedingTree(
+                child,
                 visited
             );
         }
+    }
 
-        const host = flea.host;
+
+    collectFeedingComponent(root) {
+        const result = [];
+        const visited = new Set();
+
+        const visit = flea => {
+            if (
+                !flea ||
+                !flea.alive ||
+                visited.has(flea)
+            ) {
+                return;
+            }
+
+            visited.add(flea);
+            result.push(flea);
+
+            for (
+                const child
+                of this.feedingChildren(flea)
+            ) {
+                visit(child);
+            }
+        };
+
+        visit(root);
+
+        return result;
+    }
+
+
+    keepFeedingComponentVisible(root) {
+        const component =
+            this.collectFeedingComponent(root);
+
+        if (component.length <= 1) {
+            return;
+        }
+
+        const LEFT = 6;
+        const RIGHT =
+            this.scale.width - 6;
+
+        const TOP = 84;
+        const BOTTOM = 344;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+
+        for (const flea of component) {
+            minX = Math.min(
+                minX,
+                flea.sprite.x -
+                flea.sprite.displayWidth / 2
+            );
+
+            maxX = Math.max(
+                maxX,
+                flea.sprite.x +
+                flea.sprite.displayWidth / 2
+            );
+
+            minY = Math.min(
+                minY,
+                flea.sprite.y -
+                flea.sprite.displayHeight / 2
+            );
+
+            maxY = Math.max(
+                maxY,
+                flea.sprite.y +
+                flea.sprite.displayHeight / 2
+            );
+        }
+
+        let shiftX = 0;
+        let shiftY = 0;
+
+        if (minX < LEFT) {
+            shiftX =
+                LEFT - minX;
+        } else if (maxX > RIGHT) {
+            shiftX =
+                RIGHT - maxX;
+        }
+
+        if (minY < TOP) {
+            shiftY =
+                TOP - minY;
+        } else if (maxY > BOTTOM) {
+            shiftY =
+                BOTTOM - maxY;
+        }
 
         /*
-         * Keep parasite immediately above its host.
-         * Phaser positions sprites by their centers.
+         * Emergency correction moves the connected feeding group
+         * together. Relative positions stay unchanged, so nobody is
+         * pushed behind somebody else by individual edge clamps.
          */
-        flea.sprite.x = host.sprite.x;
-
-        flea.sprite.y =
-            host.sprite.y -
-            host.sprite.displayHeight / 2 -
-            flea.sprite.displayHeight / 2 -
-            2;
-
-        /*
-         * Usually this changes nothing. It only intervenes if an
-         * unusually tall stack would leave the visible play area.
-         */
-        this.keepFleaVisible(flea);
+        if (
+            shiftX !== 0 ||
+            shiftY !== 0
+        ) {
+            for (const flea of component) {
+                flea.sprite.x += shiftX;
+                flea.sprite.y += shiftY;
+            }
+        }
     }
 
 
     positionAllFeedingFleas() {
-        for (const flea of this.fleas) {
-            if (
-                flea.alive &&
-                flea.feeding
-            ) {
-                this.positionFeedingFlea(
-                    flea,
-                    new Set()
+        /*
+         * Roots are hosts that have parasites but are not themselves
+         * feeding on another flea.
+         */
+        const roots =
+            this.fleas.filter(
+                flea =>
+                    flea.alive &&
+                    this.feedingChildren(flea).length > 0 &&
+                    !flea.feeding
+            );
+
+        /*
+         * A pathological cycle should never exist, but if every
+         * feeding flea happens to have a host, use the first live
+         * feeding component rather than hiding it.
+         */
+        if (roots.length === 0) {
+            const fallback =
+                this.fleas.find(
+                    flea =>
+                        flea.alive &&
+                        this.feedingChildren(flea).length > 0
                 );
+
+            if (fallback) {
+                roots.push(fallback);
             }
+        }
+
+        for (const root of roots) {
+            this.positionFeedingTree(
+                root,
+                new Set()
+            );
+
+            this.keepFeedingComponentVisible(
+                root
+            );
         }
     }
 
@@ -646,6 +893,61 @@ class FleaScene extends Phaser.Scene {
             return;
         }
 
+        if (this.levelFleaCount === 2) {
+            const other =
+                this.fleas.find(
+                    candidate =>
+                        candidate !== flea &&
+                        candidate.alive
+                );
+
+            if (!other) {
+                return;
+            }
+
+            const fleaIsSmaller =
+                flea.area < other.area;
+
+            const wantSmaller =
+                this.demoPhase === "choose-small";
+
+            const correctChoice =
+                wantSmaller
+                    ? fleaIsSmaller
+                    : !fleaIsSmaller;
+
+            if (!correctChoice) {
+                this.selectionText.setText(
+                    wantSmaller
+                        ? "Try again — click the smaller flea."
+                        : "Try again — click the larger flea."
+                );
+                return;
+            }
+
+            if (this.selectedFlea) {
+                this.selectedFlea.sprite.clearTint();
+                this.selectedFlea.chosen = false;
+            }
+
+            this.selectedFlea = flea;
+            flea.chosen = true;
+
+            // Neutral selection color only.
+            flea.sprite.setTint(0xffd966);
+
+            this.selectionText.setText(
+                wantSmaller
+                    ? "Smaller flea selected. Press JUMP."
+                    : "Larger flea selected. Press JUMP."
+            );
+
+            return;
+        }
+
+        /*
+         * Ordinary levels retain normal prediction behavior.
+         */
         if (this.selectedFlea) {
             this.selectedFlea.sprite.clearTint();
             this.selectedFlea.chosen = false;
@@ -663,13 +965,22 @@ class FleaScene extends Phaser.Scene {
 
 
     beginJumpPhase() {
-        if (this.simulationRunning || this.gameFinished) {
+        if (
+            this.simulationRunning ||
+            this.gameFinished
+        ) {
             return;
         }
 
         if (!this.selectedFlea) {
             this.selectionText.setText(
-                "Pick a flea first."
+                this.levelFleaCount === 2
+                    ? (
+                        this.demoPhase === "choose-large"
+                            ? "First click the larger flea."
+                            : "First click the smaller flea."
+                      )
+                    : "Pick a flea first."
             );
             return;
         }
@@ -678,6 +989,46 @@ class FleaScene extends Phaser.Scene {
 
         this.jumpButton.disableInteractive();
         this.jumpButton.setAlpha(0.4);
+
+        /*
+         * Tutorial Demo:
+         * explicitly demonstrate the selected flea's jump.
+         */
+        if (this.levelFleaCount === 2) {
+            const host =
+                this.fleas.find(
+                    candidate =>
+                        candidate !== this.selectedFlea &&
+                        candidate.alive
+                );
+
+            if (!host) {
+                return;
+            }
+
+            if (this.demoPhase === "choose-small") {
+                this.demoPhase = "small-run";
+
+                this.selectionText.setText(
+                    "Watch the smaller flea jump..."
+                );
+            } else if (
+                this.demoPhase === "choose-large"
+            ) {
+                this.demoPhase = "large-run";
+
+                this.selectionText.setText(
+                    "Now watch what happens..."
+                );
+            }
+
+            this.beginTravelToHost(
+                this.selectedFlea,
+                host
+            );
+
+            return;
+        }
 
         this.selectionText.setText(
             `Flea ${this.selectedFlea.number} selected — jump!`
@@ -690,6 +1041,29 @@ class FleaScene extends Phaser.Scene {
             !this.simulationRunning ||
             this.gameFinished
         ) {
+            return;
+        }
+
+        /*
+         * The two tutorial demonstrations launch only the flea
+         * explicitly selected by the player.
+         */
+        if (
+            this.levelFleaCount === 2 &&
+            (
+                this.demoPhase === "small-run" ||
+                this.demoPhase === "large-run"
+            )
+        ) {
+            if (
+                this.selectedFlea &&
+                this.selectedFlea.jumping
+            ) {
+                this.moveTowardHost(
+                    this.selectedFlea
+                );
+            }
+
             return;
         }
 
@@ -717,40 +1091,10 @@ class FleaScene extends Phaser.Scene {
                     this.lookForLargerFlea(flea);
 
                 if (host) {
-                    flea.host = host;
-
-                    /*
-                     * Greenfoot aimed toward the host, with the
-                     * parasite positioned approximately above it.
-                     */
-                    const targetX = host.sprite.x;
-
-                    // Put the parasite immediately above the host,
-                    // using half-heights because Phaser sprite
-                    // positions are measured from their centers.
-                    const rawTargetY =
-                        host.sprite.y -
-                        (
-                            host.sprite.displayHeight / 2 +
-                            flea.sprite.displayHeight / 2 +
-                            2
-                        );
-
-                    // Keep the entire parasite visible.
-                    const targetY = Math.max(
-                        flea.sprite.displayHeight / 2 + 5,
-                        rawTargetY
+                    this.beginTravelToHost(
+                        flea,
+                        host
                     );
-
-                    flea.dx = Math.round(
-                        targetX - flea.sprite.x
-                    );
-
-                    flea.dy = Math.round(
-                        targetY - flea.sprite.y
-                    );
-
-                    flea.jumping = true;
                 }
             }
 
@@ -825,32 +1169,439 @@ class FleaScene extends Phaser.Scene {
             return;
         }
 
-        attacker.host = target;
+        this.beginTravelToHost(
+            attacker,
+            target
+        );
+    }
 
-        const targetX = target.sprite.x;
 
-        const rawTargetY =
-            target.sprite.y -
+    beginTravelToHost(flea, host) {
+        flea.host = host;
+
+        /*
+         * Debug Newtonian physics incrementally:
+         * only the two-flea Demo uses it for now.
+         */
+        if (this.levelFleaCount <= 3) {
+            this.preparePhysics1AJump(
+                flea,
+                host
+            );
+        } else {
+            this.prepareGeometricJump(
+                flea,
+                host
+            );
+        }
+    }
+
+
+    prepareGeometricJump(flea, host) {
+        const targetX = host.sprite.x;
+
+        const targetY =
+            host.sprite.y -
             (
-                target.sprite.displayHeight / 2 +
-                attacker.sprite.displayHeight / 2 +
+                host.sprite.displayHeight / 2 +
+                flea.sprite.displayHeight / 2 +
                 2
             );
 
-        const targetY = Math.max(
-            attacker.sprite.displayHeight / 2 + 5,
-            rawTargetY
+        flea.dx = Math.round(
+            targetX - flea.sprite.x
         );
 
-        attacker.dx = Math.round(
-            targetX - attacker.sprite.x
+        flea.dy = Math.round(
+            targetY - flea.sprite.y
         );
 
-        attacker.dy = Math.round(
-            targetY - attacker.sprite.y
+        flea.flight = null;
+        flea.jumping = true;
+    }
+
+
+    preparePhysics1AJump(flea, host) {
+        /*
+         * OPTION 1A
+         *
+         * Similar geometry and density:
+         *
+         *     mass proportional to height^3
+         *
+         * Assume stored launch energy is proportional to mass.
+         * Since
+         *
+         *     E = 1/2 m v^2
+         *
+         * constant E/m gives approximately constant launch speed.
+         *
+         * Mass therefore does NOT alter the free-flight parabola.
+         * That is correct Newtonian mechanics.
+         */
+
+        const G = 9.81;
+
+        /*
+         * Nominal takeoff speed for the simplified model.
+         *
+         * Unlike 1B, this is a model parameter rather than a claim
+         * about measured flea biomechanics.
+         */
+        const SPEED = 1.50;
+
+        /*
+         * Convert screen distance into metres.
+         * 1800 pixels corresponds to one simulated metre.
+         */
+        const PIXELS_PER_METER = 1800;
+
+        /*
+         * Real ballistic motion is too quick to inspect.
+         * Uniform time dilation changes neither the trajectory
+         * nor ordering of arrival events.
+         */
+        const SLOW_MOTION = 6.0;
+
+        const startX = flea.sprite.x;
+        const startY = flea.sprite.y;
+
+        /*
+         * Land exactly on top of the host.
+         *
+         * Move toward the approaching side of its upper surface,
+         * but remain fully supported by the host.
+         */
+        const topOffset = Math.max(
+            0,
+            (
+                host.sprite.displayWidth -
+                flea.sprite.displayWidth
+            ) / 2 - 2
         );
 
-        attacker.jumping = true;
+        let direction =
+            Math.sign(
+                startX - host.sprite.x
+            );
+
+        if (direction === 0) {
+            direction =
+                host.sprite.x <
+                this.scale.width / 2
+                    ? 1
+                    : -1;
+        }
+
+        let targetX =
+            host.sprite.x +
+            direction * topOffset;
+
+        const targetY =
+            host.sprite.y -
+            (
+                host.sprite.displayHeight / 2 +
+                flea.sprite.displayHeight / 2 +
+                2
+            );
+
+        /*
+         * Avoid a mathematically degenerate perfectly vertical shot.
+         */
+        if (
+            Math.abs(
+                targetX - startX
+            ) < 6
+        ) {
+            targetX +=
+                direction * 6;
+        }
+
+        const signedDxPixels =
+            targetX - startX;
+
+        const horizontalDirection =
+            Math.sign(signedDxPixels);
+
+        const x =
+            Math.abs(signedDxPixels) /
+            PIXELS_PER_METER;
+
+        /*
+         * Physical y is positive upward.
+         */
+        const y =
+            (startY - targetY) /
+            PIXELS_PER_METER;
+
+        /*
+         * Projectile equation:
+         *
+         * y =
+         * x tan(theta)
+         * - g x^2 (1 + tan^2(theta)) / (2 v^2)
+         *
+         * Let u = tan(theta).
+         *
+         * This becomes a quadratic:
+         *
+         * A u^2 - x u + (y + A) = 0
+         *
+         * where
+         *
+         * A = g x^2 / (2 v^2)
+         */
+        const A =
+            G * x * x /
+            (2 * SPEED * SPEED);
+
+        const discriminant =
+            x * x -
+            4 * A * (y + A);
+
+        if (
+            !Number.isFinite(discriminant) ||
+            discriminant < 0 ||
+            A <= 0
+        ) {
+            console.warn(
+                "No 1A ballistic solution; using geometric fallback."
+            );
+
+            this.prepareGeometricJump(
+                flea,
+                host
+            );
+
+            return;
+        }
+
+        const root =
+            Math.sqrt(discriminant);
+
+        const tanLow =
+            (x - root) /
+            (2 * A);
+
+        const tanHigh =
+            (x + root) /
+            (2 * A);
+
+        const candidateAngles = [
+            Math.atan(tanLow),
+            Math.atan(tanHigh)
+        ].filter(theta =>
+            Number.isFinite(theta) &&
+            theta > 0 &&
+            theta <
+                Phaser.Math.DegToRad(85)
+        );
+
+        if (candidateAngles.length === 0) {
+            console.warn(
+                "No usable 1A launch angle; using geometric fallback."
+            );
+
+            this.prepareGeometricJump(
+                flea,
+                host
+            );
+
+            return;
+        }
+
+        /*
+         * Prefer the HIGHER arc because it makes the jumping flea
+         * visually obvious and keeps it clear of other sprites.
+         *
+         * But if that arc would go above the visible playfield,
+         * use the lower valid solution instead.
+         */
+        candidateAngles.sort(
+            (a, b) => b - a
+        );
+
+        let theta =
+            candidateAngles[0];
+
+        for (const candidate of candidateAngles) {
+            const vyCandidate =
+                SPEED *
+                Math.sin(candidate);
+
+            const apexHeightMeters =
+                vyCandidate *
+                vyCandidate /
+                (2 * G);
+
+            const apexScreenY =
+                startY -
+                apexHeightMeters *
+                PIXELS_PER_METER;
+
+            if (apexScreenY > 55) {
+                theta = candidate;
+                break;
+            }
+        }
+
+        const vx =
+            horizontalDirection *
+            SPEED *
+            Math.cos(theta);
+
+        const vy =
+            SPEED *
+            Math.sin(theta);
+
+        const flightTime =
+            x /
+            (
+                SPEED *
+                Math.cos(theta)
+            );
+
+        /*
+         * Requested physical mass model.
+         *
+         * Use logical side 50 as one reference flea.
+         * Absolute reference mass is arbitrary in 1A;
+         * the cubic scaling is what matters.
+         */
+        const logicalHeight =
+            Math.sqrt(flea.area);
+
+        const referenceHeight = 50;
+        const referenceMass = 1.0;
+
+        const relativeMass =
+            referenceMass *
+            Math.pow(
+                logicalHeight /
+                referenceHeight,
+                3
+            );
+
+        /*
+         * Because speed is constant in 1A:
+         *
+         * kinetic energy scales directly with mass.
+         */
+        const relativeEnergy =
+            0.5 *
+            relativeMass *
+            SPEED *
+            SPEED;
+
+        flea.flight = {
+            startX,
+            startY,
+
+            targetX,
+            targetY,
+
+            vx,
+            vy,
+
+            gravity: G,
+
+            pixelsPerMeter:
+                PIXELS_PER_METER,
+
+            physicalDuration:
+                flightTime,
+
+            slowMotion:
+                SLOW_MOTION,
+
+            startTime:
+                this.time.now,
+
+            angle:
+                theta,
+
+            speed:
+                SPEED,
+
+            relativeMass,
+            relativeEnergy
+        };
+
+        flea.jumping = true;
+
+        /*
+         * Airborne flea always appears in front.
+         */
+        flea.sprite.setDepth(
+            1000 + flea.number
+        );
+
+        console.log(
+            `1A flea ${flea.number}:`,
+            `angle=${Phaser.Math.RadToDeg(theta).toFixed(1)} deg`,
+            `speed=${SPEED.toFixed(2)}`,
+            `relative mass=${relativeMass.toFixed(3)}`,
+            `flight=${flightTime.toFixed(3)} s`
+        );
+    }
+
+
+    landOnHost(flea) {
+        flea.jumping = false;
+        flea.flight = null;
+
+        /*
+         * Second tutorial example:
+         * the larger flea made the attempted jump.
+         * Stop here and demonstrate that this is the wrong choice.
+         */
+        if (
+            this.levelFleaCount === 2 &&
+            this.demoPhase === "large-run"
+        ) {
+            this.simulationRunning = false;
+            this.gameFinished = true;
+
+            flea.sprite.setTint(0xff7777);
+
+            this.selectionText.setText(
+                "That was the larger flea — wrong choice."
+            );
+
+            try {
+                this.sound.play(
+                    "lose",
+                    { volume: 0.30 }
+                );
+            } catch (error) {
+                // Tutorial still works without sound.
+            }
+
+            return;
+        }
+
+        /*
+         * First tutorial example:
+         * smaller flea landed correctly and now consumes its host.
+         */
+        flea.feeding = true;
+        flea.host.hasFleas = true;
+
+        flea.sprite.setDepth(
+            flea.host.sprite.depth + 1
+        );
+
+        try {
+            this.sound.play(
+                "slurp",
+                { volume: 0.20 }
+            );
+        } catch (error) {
+            console.log(
+                "Sound unavailable:",
+                error
+            );
+        }
     }
 
 
@@ -906,13 +1657,68 @@ class FleaScene extends Phaser.Scene {
         }
 
         /*
-         * This intentionally reproduces the original
-         * pre-physics Greenfoot movement:
-         *
-         * one pixel vertically and one pixel horizontally
-         * on each update.
+         * Newtonian 1A flight.
          */
+        if (flea.flight) {
+            const f =
+                flea.flight;
 
+            const displayedSeconds =
+                (
+                    this.time.now -
+                    f.startTime
+                ) / 1000;
+
+            const t =
+                displayedSeconds /
+                f.slowMotion;
+
+            if (
+                t >=
+                f.physicalDuration
+            ) {
+                /*
+                 * Remove only floating-point error at landing.
+                 */
+                flea.sprite.x =
+                    f.targetX;
+
+                flea.sprite.y =
+                    f.targetY;
+
+                this.landOnHost(flea);
+                return;
+            }
+
+            const physicalX =
+                f.vx * t;
+
+            const physicalY =
+                f.vy * t -
+                0.5 *
+                f.gravity *
+                t *
+                t;
+
+            flea.sprite.x =
+                f.startX +
+                physicalX *
+                f.pixelsPerMeter;
+
+            /*
+             * Phaser y points downward.
+             */
+            flea.sprite.y =
+                f.startY -
+                physicalY *
+                f.pixelsPerMeter;
+
+            return;
+        }
+
+        /*
+         * Existing geometric travel remains for Levels 1-6.
+         */
         if (flea.dy > 0) {
             flea.sprite.y += 1;
             flea.dy -= 1;
@@ -939,32 +1745,7 @@ class FleaScene extends Phaser.Scene {
             flea.dx === 0 &&
             flea.dy === 0
         ) {
-            flea.jumping = false;
-            flea.feeding = true;
-
-            flea.host.hasFleas = true;
-
-            // Draw the parasite above its host so the
-            // feeding action remains visually legible.
-            flea.sprite.setDepth(
-                flea.host.sprite.depth + 1
-            );
-
-            /*
-             * The Jump button supplied the user gesture,
-             * so browser audio should normally be unlocked.
-             */
-            try {
-                this.sound.play(
-                    "slurp",
-                    { volume: 0.20 }
-                );
-            } catch (error) {
-                console.log(
-                    "Sound unavailable:",
-                    error
-                );
-            }
+            this.landOnHost(flea);
         }
     }
 
@@ -1173,6 +1954,7 @@ class FleaScene extends Phaser.Scene {
 
         flea.dx = 0;
         flea.dy = 0;
+        flea.flight = null;
     }
 
 
@@ -1205,6 +1987,47 @@ class FleaScene extends Phaser.Scene {
         }
 
         const winner = survivors[0];
+
+        /*
+         * Finish the first tutorial demonstration.
+         * Victory feedback happens only after the consumption
+         * sequence has actually produced its survivor.
+         */
+        if (
+            this.levelFleaCount === 2 &&
+            this.demoPhase === "small-run"
+        ) {
+            this.gameFinished = true;
+            this.simulationRunning = false;
+
+            winner.sprite.setTint(0x88ff88);
+
+            this.selectionText.setText(
+                "Correct — the smaller flea is the survivor!"
+            );
+
+            try {
+                this.sound.play(
+                    "win",
+                    { volume: 0.35 }
+                );
+            } catch (error) {
+                // Tutorial still works without sound.
+            }
+
+            this.time.delayedCall(
+                1600,
+                () => {
+                    this.scene.restart({
+                        fleaCount: 2,
+                        levelName: "Demo",
+                        demoPhase: "choose-large"
+                    });
+                }
+            );
+
+            return;
+        }
 
         this.gameFinished = true;
         this.simulationRunning = false;
