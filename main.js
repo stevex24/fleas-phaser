@@ -39,6 +39,13 @@ class FleaScene extends Phaser.Scene {
         this.simulationRunning = false;
         this.gameFinished = false;
 
+        /*
+         * Serial physics variant:
+         * at most one jump/absorption is active at a time.
+         */
+        this.serialJumper = null;
+        this.serialHost = null;
+
         this.fleas = [];
         this.selectedFlea = null;
 
@@ -1068,6 +1075,19 @@ class FleaScene extends Phaser.Scene {
         }
 
         /*
+         * Serial variant:
+         *
+         * Level 1 and later levels execute exactly one
+         * jump/absorption at a time.
+         *
+         * The two-flea Demo keeps its special tutorial sequence.
+         */
+        if (this.levelFleaCount >= 3) {
+            this.updateSerialSimulation();
+            return;
+        }
+
+        /*
          * Equivalent to Flea.act().
          */
         for (const flea of this.fleas) {
@@ -1601,6 +1621,255 @@ class FleaScene extends Phaser.Scene {
                 "Sound unavailable:",
                 error
             );
+        }
+    }
+
+
+    chooseNextSerialPair() {
+        const survivors =
+            this.fleas.filter(
+                flea => flea.alive
+            );
+
+        if (survivors.length < 2) {
+            return null;
+        }
+
+        const unequalPairs = [];
+        const equalPairs = [];
+
+        /*
+         * Construct every possible pair.
+         *
+         * Deterministic ordering key:
+         *
+         *   1. squared center distance
+         *   2. lower flea number
+         *   3. higher flea number
+         */
+        for (
+            let i = 0;
+            i < survivors.length;
+            i++
+        ) {
+            for (
+                let j = i + 1;
+                j < survivors.length;
+                j++
+            ) {
+                const a = survivors[i];
+                const b = survivors[j];
+
+                const dx =
+                    a.sprite.x - b.sprite.x;
+
+                const dy =
+                    a.sprite.y - b.sprite.y;
+
+                const distanceSquared =
+                    dx * dx + dy * dy;
+
+                const lowNumber =
+                    Math.min(
+                        a.number,
+                        b.number
+                    );
+
+                const highNumber =
+                    Math.max(
+                        a.number,
+                        b.number
+                    );
+
+                const pair = {
+                    a,
+                    b,
+                    distanceSquared,
+                    lowNumber,
+                    highNumber
+                };
+
+                if (
+                    Math.abs(
+                        a.area - b.area
+                    ) > 1e-9
+                ) {
+                    unequalPairs.push(pair);
+                } else {
+                    equalPairs.push(pair);
+                }
+            }
+        }
+
+        /*
+         * If ANY unequal-size pair exists, only unequal pairs
+         * participate. This preserves the rule that the smaller
+         * flea jumps on the larger flea.
+         *
+         * Only when ALL surviving fleas are equal do equal pairs
+         * become eligible.
+         */
+        const candidates =
+            unequalPairs.length > 0
+                ? unequalPairs
+                : equalPairs;
+
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        candidates.sort((left, right) => {
+            if (
+                left.distanceSquared !==
+                right.distanceSquared
+            ) {
+                return (
+                    left.distanceSquared -
+                    right.distanceSquared
+                );
+            }
+
+            if (
+                left.lowNumber !==
+                right.lowNumber
+            ) {
+                return (
+                    left.lowNumber -
+                    right.lowNumber
+                );
+            }
+
+            return (
+                left.highNumber -
+                right.highNumber
+            );
+        });
+
+        const chosen =
+            candidates[0];
+
+        let jumper;
+        let host;
+
+        if (
+            Math.abs(
+                chosen.a.area -
+                chosen.b.area
+            ) <= 1e-9
+        ) {
+            /*
+             * Complete equality:
+             * lower-numbered flea jumps.
+             */
+            if (
+                chosen.a.number <
+                chosen.b.number
+            ) {
+                jumper = chosen.a;
+                host = chosen.b;
+            } else {
+                jumper = chosen.b;
+                host = chosen.a;
+            }
+        } else if (
+            chosen.a.area <
+            chosen.b.area
+        ) {
+            jumper = chosen.a;
+            host = chosen.b;
+        } else {
+            jumper = chosen.b;
+            host = chosen.a;
+        }
+
+        return {
+            jumper,
+            host
+        };
+    }
+
+
+    startNextSerialInteraction() {
+        if (this.gameFinished) {
+            return;
+        }
+
+        this.checkForWinner();
+
+        if (this.gameFinished) {
+            return;
+        }
+
+        const interaction =
+            this.chooseNextSerialPair();
+
+        if (!interaction) {
+            return;
+        }
+
+        this.serialJumper =
+            interaction.jumper;
+
+        this.serialHost =
+            interaction.host;
+
+        this.selectionText.setText(
+            `Flea ${interaction.jumper.number} jumps on flea ${interaction.host.number}...`
+        );
+
+        this.beginTravelToHost(
+            interaction.jumper,
+            interaction.host
+        );
+    }
+
+
+    updateSerialSimulation() {
+        if (this.gameFinished) {
+            return;
+        }
+
+        /*
+         * If an interaction is active, let it finish completely.
+         */
+        if (
+            this.serialJumper &&
+            this.serialJumper.alive
+        ) {
+            if (
+                this.serialJumper.jumping
+            ) {
+                this.moveTowardHost(
+                    this.serialJumper
+                );
+
+                return;
+            }
+
+            /*
+             * feedingStep(), driven by the existing timer,
+             * performs the full absorption.
+             *
+             * Nothing else may start until it finishes.
+             */
+            if (
+                this.serialJumper.feeding
+            ) {
+                return;
+            }
+        }
+
+        /*
+         * Host disappearance releases the jumper.
+         * At that point the interaction is complete.
+         */
+        this.serialJumper = null;
+        this.serialHost = null;
+
+        this.checkForWinner();
+
+        if (!this.gameFinished) {
+            this.startNextSerialInteraction();
         }
     }
 
