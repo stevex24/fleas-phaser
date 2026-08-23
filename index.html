@@ -1,22 +1,172 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Fleas</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>Fleas — The Last Flea Standing</title>
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js">
+    </script>
+
     <style>
         body {
             margin: 0;
-            background: #222;
+            padding: 24px 16px 40px;
+            background: #f4efe3;
+            color: #222;
+            font-family: Georgia, serif;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            align-items: center;
         }
+
+        .intro {
+            width: min(700px, calc(100% - 24px));
+            box-sizing: border-box;
+            margin-bottom: 18px;
+            padding: 22px 28px;
+            background: #fffaf0;
+            border: 2px solid #6d604e;
+            border-radius: 14px;
+        }
+
+        h1 {
+            margin: 0 0 4px;
+            text-align: center;
+            font-size: 32px;
+        }
+
+        .subtitle {
+            margin: 0 0 18px;
+            text-align: center;
+            font-style: italic;
+        }
+
+        blockquote {
+            margin: 16px auto;
+            padding-left: 20px;
+            border-left: 4px solid #958570;
+            max-width: 500px;
+            line-height: 1.5;
+        }
+
+        .attribution {
+            text-align: right;
+            font-size: 14px;
+        }
+
+        .rules {
+            line-height: 1.5;
+        }
+
+        .challenge {
+            margin-bottom: 0;
+            font-weight: bold;
+        }
+
         canvas {
-            margin-top: 20px;
+            max-width: 100%;
+            height: auto;
         }
     </style>
 </head>
+
 <body>
+
+<section class="intro" id="game-intro">
+    <h1>The Last Flea Standing</h1>
+
+    <div id="intro-details">
+    <p class="subtitle">
+        A deterministic prediction game
+    </p>
+
+    <blockquote>
+        “So, naturalists observe, a flea<br>
+        Hath smaller fleas that on him prey;<br>
+        And these have smaller still to bite ’em,<br>
+        And so proceed <em>ad infinitum</em>.”
+    </blockquote>
+
+    <p class="attribution">
+        — Jonathan Swift,
+        <em>On Poetry: A Rhapsody</em> (1733)
+    </p>
+
+    <p>
+        Swift’s fleas proceed forever. These do not:
+        eventually there is only one flea standing.
+        The title also gives a playful nod to
+        <em>Last Man Standing</em>, the 1996 film starring
+        Bruce Willis.
+    </p>
+
+    <p class="rules">
+        <strong>Rules:</strong>
+        At each stage, the two closest surviving fleas meet.
+        The smaller flea jumps onto the larger flea and absorbs it,
+        acquiring all of its mass. The distances are then
+        recalculated, and the process repeats until only one flea
+        remains.
+    </p>
+
+    <p class="rules">
+        If the closest fleas are exactly the same size, the
+        <strong>higher</strong> flea jumps. If they are also at the
+        same height, the <strong>leftmost</strong> flea jumps.
+    </p>
+
+    <p class="challenge">
+        The Demo teaches the rule. In the numbered levels, choose
+        the flea you predict will be the last flea standing — then
+        press JUMP and see whether you calculated the sequence.
+    </p>
+    </div>
+
+    <p id="level-message" style="display:none; text-align:center; font-weight:bold;">
+        Now choose a level, starting with Level 1 for 3 fleas,
+        and proceed at your own pace.
+    </p>
+</section>
+
+<script>
+window.addEventListener("fleas-demo-complete", () => {
+    const details =
+        document.getElementById("intro-details");
+
+    const message =
+        document.getElementById("level-message");
+
+    if (details) {
+        details.style.display = "none";
+    }
+
+    if (message) {
+        message.style.display = "block";
+    }
+
+    setTimeout(() => {
+        if (message) {
+            message.style.display = "none";
+        }
+
+        const intro =
+            document.getElementById("game-intro");
+
+        if (intro) {
+            intro.style.padding = "10px 20px";
+            intro.style.marginBottom = "8px";
+        }
+    }, 5000);
+});
+</script>
+
 <script src="main.js"></script>
+
 </body>
 </html>

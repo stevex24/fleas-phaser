@@ -1594,6 +1594,15 @@ class FleaScene extends Phaser.Scene {
                 // Tutorial still works without sound.
             }
 
+            /*
+             * The two-example tutorial is now complete.
+             * Tell the surrounding page that the player is
+             * ready for the numbered levels.
+             */
+            window.dispatchEvent(
+                new Event("fleas-demo-complete")
+            );
+
             return;
         }
 
@@ -1632,17 +1641,11 @@ class FleaScene extends Phaser.Scene {
             return null;
         }
 
-        const unequalPairs = [];
-        const equalPairs = [];
+        const pairs = [];
 
         /*
-         * Construct every possible pair.
-         *
-         * Deterministic ordering key:
-         *
-         *   1. squared center distance
-         *   2. lower flea number
-         *   3. higher flea number
+         * Rule 1:
+         * Always choose the two CLOSEST surviving fleas.
          */
         for (
             let i = 0;
@@ -1663,59 +1666,45 @@ class FleaScene extends Phaser.Scene {
                 const dy =
                     a.sprite.y - b.sprite.y;
 
-                const distanceSquared =
-                    dx * dx + dy * dy;
-
-                const lowNumber =
-                    Math.min(
-                        a.number,
-                        b.number
-                    );
-
-                const highNumber =
-                    Math.max(
-                        a.number,
-                        b.number
-                    );
-
-                const pair = {
+                pairs.push({
                     a,
                     b,
-                    distanceSquared,
-                    lowNumber,
-                    highNumber
-                };
+                    distanceSquared:
+                        dx * dx + dy * dy,
 
-                if (
-                    Math.abs(
-                        a.area - b.area
-                    ) > 1e-9
-                ) {
-                    unequalPairs.push(pair);
-                } else {
-                    equalPairs.push(pair);
-                }
+                    /*
+                     * Visible geometric tie-breakers if two
+                     * pair distances happen to be identical.
+                     */
+                    pairY:
+                        (a.sprite.y + b.sprite.y) / 2,
+
+                    pairX:
+                        (a.sprite.x + b.sprite.x) / 2,
+
+                    lowNumber:
+                        Math.min(
+                            a.number,
+                            b.number
+                        ),
+
+                    highNumber:
+                        Math.max(
+                            a.number,
+                            b.number
+                        )
+                });
             }
         }
 
         /*
-         * If ANY unequal-size pair exists, only unequal pairs
-         * participate. This preserves the rule that the smaller
-         * flea jumps on the larger flea.
+         * Closest pair first.
          *
-         * Only when ALL surviving fleas are equal do equal pairs
-         * become eligible.
+         * Exact distance ties are resolved by the higher pair,
+         * then the leftmost pair, with flea numbers retained only
+         * as an essentially invisible final deterministic fallback.
          */
-        const candidates =
-            unequalPairs.length > 0
-                ? unequalPairs
-                : equalPairs;
-
-        if (candidates.length === 0) {
-            return null;
-        }
-
-        candidates.sort((left, right) => {
+        pairs.sort((left, right) => {
             if (
                 left.distanceSquared !==
                 right.distanceSquared
@@ -1724,6 +1713,14 @@ class FleaScene extends Phaser.Scene {
                     left.distanceSquared -
                     right.distanceSquared
                 );
+            }
+
+            if (left.pairY !== right.pairY) {
+                return left.pairY - right.pairY;
+            }
+
+            if (left.pairX !== right.pairX) {
+                return left.pairX - right.pairX;
             }
 
             if (
@@ -1742,25 +1739,50 @@ class FleaScene extends Phaser.Scene {
             );
         });
 
-        const chosen =
-            candidates[0];
+        const chosen = pairs[0];
 
         let jumper;
         let host;
 
+        const areaDifference =
+            chosen.a.area -
+            chosen.b.area;
+
+        /*
+         * Rule 2:
+         * If sizes differ, smaller flea jumps on larger flea.
+         */
+        if (Math.abs(areaDifference) > 1e-9) {
+            if (chosen.a.area < chosen.b.area) {
+                jumper = chosen.a;
+                host = chosen.b;
+            } else {
+                jumper = chosen.b;
+                host = chosen.a;
+            }
+
+            return {
+                jumper,
+                host
+            };
+        }
+
+        /*
+         * Rule 3:
+         * Equal size -> HIGHER flea jumps.
+         *
+         * Phaser y increases downward, so the higher flea has
+         * the SMALLER y coordinate.
+         */
         if (
             Math.abs(
-                chosen.a.area -
-                chosen.b.area
-            ) <= 1e-9
+                chosen.a.sprite.y -
+                chosen.b.sprite.y
+            ) > 1e-9
         ) {
-            /*
-             * Complete equality:
-             * lower-numbered flea jumps.
-             */
             if (
-                chosen.a.number <
-                chosen.b.number
+                chosen.a.sprite.y <
+                chosen.b.sprite.y
             ) {
                 jumper = chosen.a;
                 host = chosen.b;
@@ -1768,10 +1790,46 @@ class FleaScene extends Phaser.Scene {
                 jumper = chosen.b;
                 host = chosen.a;
             }
-        } else if (
-            chosen.a.area <
-            chosen.b.area
+
+            return {
+                jumper,
+                host
+            };
+        }
+
+        /*
+         * Rule 4:
+         * Same size and same height -> LEFTMOST flea jumps.
+         */
+        if (
+            Math.abs(
+                chosen.a.sprite.x -
+                chosen.b.sprite.x
+            ) > 1e-9
         ) {
+            if (
+                chosen.a.sprite.x <
+                chosen.b.sprite.x
+            ) {
+                jumper = chosen.a;
+                host = chosen.b;
+            } else {
+                jumper = chosen.b;
+                host = chosen.a;
+            }
+
+            return {
+                jumper,
+                host
+            };
+        }
+
+        /*
+         * The initial non-overlap rule should make this final case
+         * essentially impossible. Keep flea number only as the final
+         * deterministic fallback.
+         */
+        if (chosen.a.number < chosen.b.number) {
             jumper = chosen.a;
             host = chosen.b;
         } else {
