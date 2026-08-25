@@ -385,8 +385,17 @@ class FleaScene extends Phaser.Scene {
          * it at a visible interval.
          */
         this.time.addEvent({
-            delay: 120,
+            /*
+             * Keep the Demo slow enough to teach the absorption rule.
+             * Numbered levels move substantially faster.
+             */
+            delay:
+                this.levelFleaCount === 2
+                    ? 120
+                    : 80,
+
             loop: true,
+
             callback: () => {
                 if (this.simulationRunning) {
                     this.feedingStep();
@@ -2118,7 +2127,10 @@ class FleaScene extends Phaser.Scene {
          *
          * All three transfers occur during the same tick.
          */
-        const FEED_AREA_PER_TICK = 300;
+        const FEED_AREA_PER_TICK =
+            this.levelFleaCount === 2
+                ? 300
+                : 500;
 
         const survivors =
             this.fleas.filter(flea => flea.alive);
